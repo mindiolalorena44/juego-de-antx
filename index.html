@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>NPC City 3D — V14</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#74bce8;font-family:system-ui,sans-serif;touch-action:none}
+canvas{display:block;width:100%;height:100%}
+#ui{position:fixed;inset:0;color:#fff;text-shadow:0 2px 3px #000;pointer-events:none}
+#stats{position:absolute;top:9px;left:10px;font-weight:900;font-size:16px}
+#help{position:absolute;bottom:91px;left:50%;transform:translateX(-50%);padding:7px 12px;border-radius:12px;background:#101820cc;font-size:13px;font-weight:700;white-space:nowrap}
+#joy{position:absolute;left:18px;bottom:18px;width:124px;height:124px;border:2px solid #ffffff80;border-radius:50%;background:#ffffff18;pointer-events:auto}
+#knob{position:absolute;left:37px;top:37px;width:46px;height:46px;border-radius:50%;background:#ffffffa8}
+#look{position:absolute;right:0;top:0;width:68%;height:100%;pointer-events:auto}
+#cross{position:absolute;left:50%;top:50%;width:5px;height:5px;border-radius:50%;background:#fff;transform:translate(-50%,-50%);box-shadow:0 0 4px #000}
+#slots{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:5px}
+.slot{width:51px;height:51px;border:2px solid #ffffff88;border-radius:9px;background:#101820dd;text-align:center;font-size:11px;font-weight:800}
+.slot b{font-size:20px;line-height:27px}
+#gfx button{border:0;border-radius:8px;padding:7px 9px;margin:2px;background:#fff;color:#111;font-weight:800}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="ui">
+  <div id="stats">❤️ 100　⭐ <span id="score">0</span>/12　🧍 10</div>
+  <div id="cross"></div>
+  <div id="help">V16 • movimiento corregido · gráficos</div>
+  <button id="gfxBtn" style="position:absolute;right:12px;top:12px;pointer-events:auto;border:0;border-radius:10px;padding:8px 10px;background:#101820dd;color:white;font-weight:800">GRÁFICOS</button>
+  <div id="gfx" style="display:none;position:absolute;right:12px;top:55px;pointer-events:auto;background:#101820ee;padding:8px;border-radius:12px">
+    <button data-q="0">Bajo</button>
+    <button data-q="1">Medio</button>
+    <button data-q="2">Alto</button>
+    <div id="rtx" style="font-size:11px;margin-top:6px">RTX: no disponible en WebGL móvil</div>
+  </div>
+  <div id="joy"><div id="knob"></div></div>
+  <div id="look"></div>
+  <div id="slots">
+    <div class="slot">1<br><b>🔦</b></div>
+    <div class="slot">2<br><b>🍎</b></div>
+    <div class="slot">3<br><b>🍔</b></div>
+    <div class="slot">4<br><b>🥤</b></div>
+  </div>
+</div>
+
+<script>
+const canvas=document.getElementById("c");
+const gl=canvas.getContext("webgl",{antialias:false,powerPreference:"high-performance"});
+if(!gl){document.body.innerHTML="<h2 style='color:white'>Este dispositivo no tiene WebGL.</h2>";throw 0;}
+
+const VS=`attribute vec3 aPos,aNormal;
+uniform mat4 uModel,uView,uProj;
+varying vec3 vNormal;
+void main(){gl_Position=uProj*uView*uModel*vec4(aPos,1.0);vNormal=mat3(uModel)*aNormal;}`;
+const FS=`precision mediump float;
+uniform vec3 uColor;
+varying vec3 vNormal;
+void main(){vec3 L=normalize(vec3(-.35,.9,.45));float d=max(.28,dot(normalize(vNormal),L));gl_FragColor=vec4(uColor*d,1.0);}`;
+
+function shader(type,src){
+  const s=gl.createShader(type);gl.shaderSource(s,src);gl.compileShader(s);
+  return s;
+}
+const prog=gl.createProgram();
+gl.attachShader(prog,shader(gl.VERTEX_SHADER,VS));
+gl.attachShader(prog,shader(gl.FRAGMENT_SHADER,FS));
+gl.linkProgram(prog);gl.useProgram(prog);
+
+const cubePos=[
+-1,-1,-1, 1,-1,-1, 1,1,-1, -1,1,-1,
+-1,-1, 1, 1,-1, 1, 1,1, 1, -1,1, 1
+];
+const faces=[
+[0,1,2,0,2,3],[1,5,6,1,6,2],[5,4,7,5,7,6],
+[4,0,3,4,3,7],[3,2,6,3,6,7],[4,5,1,4,1,0]
+];
+const normals=[[0,0,-1],[1,0,0],[0,0,1],[-1,0,0],[0,1,0],[0,-1,0]];
+const pos=[],norm=[];
+for(let f=0;f<6;f++)for(const i of faces[f]){
+  pos.push(cubePos[i*3],cubePos[i*3+1],cubePos[i*3+2]);
+  norm.push(...normals[f]);
+}
+function makeBuf(data){
+  const b=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,b);
+  gl.bufferData(gl.ARRAY_BUFFER,new Float32Array(data),gl.STATIC_DRAW);return b;
+}
+const pb=makeBuf(pos),nb=makeBuf(norm);
+const aPos=gl.getAttribLocation(prog,"aPos"),aNormal=gl.getAttribLocation(prog,"aNormal");
+const uModel=gl.getUniformLocation(prog,"uModel"),uView=gl.getUniformLocation(prog,"uView");
+const uProj=gl.getUniformLocation(prog,"uProj"),uColor=gl.getUniformLocation(prog,"uColor");
+
+function ident(){const m=new Float32Array(16);m[0]=m[5]=m[10]=m[15]=1;return m}
+function model(x,y,z,sx,sy,sz,ry=0){
+  const m=ident(),c=Math.cos(ry),s=Math.sin(ry);
+  m[0]=c*sx;m[2]=-s*sx;m[5]=sy;m[8]=s*sz;m[10]=c*sz;
+  m[12]=x;m[13]=y;m[14]=z;return m;
+}
+function mul(a,b){
+  const o=new Float32Array(16);
+  for(let c=0;c<4;c++)for(let r=0;r<4;r++)
+    o[c*4+r]=a[r]*b[c*4]+a[4+r]*b[c*4+1]+a[8+r]*b[c*4+2]+a[12+r]*b[c*4+3];
+  return o;
+}
+function perspective(fovy,aspect,near,far){
+  const f=1/Math.tan(fovy/2),m=new Float32Array(16);
+  m[0]=f/aspect;m[5]=f;m[10]=(far+near)/(near-far);m[11]=-1;m[14]=(2*far*near)/(near-far);return m;
+}
+/* Correct right-handed lookAt matrix: camera stays level instead of rolling the world. */
+function lookAt(eye,target,up=[0,1,0]){
+  let zx=eye[0]-target[0],zy=eye[1]-target[1],zz=eye[2]-target[2];
+  let zl=Math.hypot(zx,zy,zz);zx/=zl;zy/=zl;zz/=zl;
+  let xx=up[1]*zz-up[2]*zy,xy=up[2]*zx-up[0]*zz,xz=up[0]*zy-up[1]*zx;
+  let xl=Math.hypot(xx,xy,xz);xx/=xl;xy/=xl;xz/=xl;
+  let yx=zy*xz-zz*xy,yy=zz*xx-zx*xz,yz=zx*xy-zy*xx;
+  const m=ident();
+  m[0]=xx;m[4]=xy;m[8]=xz;
+  m[1]=yx;m[5]=yy;m[9]=yz;
+  m[2]=zx;m[6]=zy;m[10]=zz;
+  m[12]=-(xx*eye[0]+xy*eye[1]+xz*eye[2]);
+  m[13]=-(yx*eye[0]+yy*eye[1]+yz*eye[2]);
+  m[14]=-(zx*eye[0]+zy*eye[1]+zz*eye[2]);
+  return m;
+}
+function drawBox(x,y,z,sx,sy,sz,color,ry=0){
+  gl.uniformMatrix4fv(uModel,false,model(x,y,z,sx,sy,sz,ry));
+  gl.uniform3fv(uColor,color);
+  gl.bindBuffer(gl.ARRAY_BUFFER,pb);gl.enableVertexAttribArray(aPos);gl.vertexAttribPointer(aPos,3,gl.FLOAT,false,0,0);
+  gl.bindBuffer(gl.ARRAY_BUFFER,nb);gl.enableVertexAttribArray(aNormal);gl.vertexAttribPointer(aNormal,3,gl.FLOAT,false,0,0);
+  gl.drawArrays(gl.TRIANGLES,0,pos.length/3);
+}
+
+const player={x:0,z:-8,y:1.65,yaw:0,pitch:0};
+const joy={x:0,y:0,active:false};
+const stars=[
+[-13,-3],[-7,-1],[-2,3],[5,2],[12,0],[-12,7],[-5,9],[2,10],[9,8],
+[-10,15],[-1,16],[8,15]
+];
+const items=[
+{x:-3,z:0,t:0},{x:4,z:4,t:1},{x:-6,z:8,t:2},{x:6,z:12,t:3}
+];
+const buildings=[
+[-11,2,2.7,3.2,2.7,[.72,.48,.36]],[-4,3,2.6,3.7,2.6,[.56,.38,.72]],
+[4,2.5,3,3.2,3,[.42,.68,.48]],[11,3,2.8,3.8,2.8,[.72,.56,.35]],
+[-10,11,3.5,4.5,3.5,[.38,.57,.74]],[-1,12,3,3.5,3,[.68,.44,.62]],
+[7,12,3.5,4.2,3.5,[.48,.67,.42]],[13,14,2.5,3.5,2.5,[.65,.45,.35]]
+];
+const npcs=[];
+for(let i=0;i<10;i++)npcs.push({x:-12+(i%5)*6,z:-2+Math.floor(i/5)*8,phase:i*.8,type:i%3});
+
+function drawRoads(){
+  drawBox(0,-.12,7,2.2,0.08,25,[.14,.15,.17]);
+  drawBox(0,-.11,-8,2.2,0.08,12,[.14,.15,.17]);
+  drawBox(-10,-.10,7,9,0.08,1.9,[.14,.15,.17]);
+  drawBox(10,-.10,7,9,0.08,1.9,[.14,.15,.17]);
+  for(let z=-16;z<30;z+=4) drawBox(0,-.005,z,.08,.025,.8,[.85,.75,.22]);
+}
+function drawBuilding(b){
+  const [x,z,sx,sy,sz,col]=b;
+  drawBox(x,sy,z,sx,sy,sz,col);
+  /* door + windows sit on the front face */
+  drawBox(x,0.8,z-sz-.035,.55,.8,.05,[.18,.12,.10]);
+  for(let wx=-1;wx<=1;wx+=2)drawBox(x+wx*sx*.48,sy*1.15,z-sz-.04,.38,.48,.05,[.35,.75,.9]);
+}
+function drawNPC(n,t){
+  const skin=[.91,.67,.48],shirts=[[.15,.38,.85],[.18,.68,.35],[.75,.22,.48]];
+  const x=n.x+Math.sin(t*.0007+n.phase)*.45,z=n.z+Math.cos(t*.0006+n.phase)*.45;
+  drawBox(x,.55,z,.25,.55,.22,shirts[n.type]);
+  drawBox(x,1.25,z,.23,.23,.23,skin);
+  drawBox(x-.11,.02,z,.09,.35,.11,[.10,.10,.13]);
+  drawBox(x+.11,.02,z,.09,.35,.11,[.10,.10,.13]);
+}
+function drawCloud(x,y,z,s){
+  const c=[.95,.97,1];
+  drawBox(x,y,z,s*.9,s*.25,s*.45,c);
+  drawBox(x-s*.55,y+.08,z,s*.45,s*.22,s*.32,c);
+  drawBox(x+s*.55,y+.04,z,s*.5,s*.20,s*.35,c);
+}
+let quality=1;
+const hasWebGL2=!!document.createElement("canvas").getContext("webgl2");
+document.getElementById("rtx").textContent =
+  "RTX: " + (hasWebGL2 ? "WebGL2 disponible, pero ray tracing real no está activo" : "no disponible en WebGL móvil");
+
+document.getElementById("gfxBtn").onclick=()=>{
+  const g=document.getElementById("gfx");
+  g.style.display=g.style.display==="none"?"block":"none";
+};
+document.querySelectorAll("#gfx button").forEach(b=>b.onclick=()=>{
+  quality=Number(b.dataset.q);
+  document.getElementById("gfx").style.display="none";
+  document.getElementById("help").textContent =
+    "Gráficos: " + (quality===0?"Bajo":quality===1?"Medio":"Alto");
+});
+
+function render(t){
+  resize();
+  const sky=quality===0?.55:.43; gl.clearColor(sky,.72,.90,1);gl.clear(gl.COLOR_BUFFER_BIT|gl.DEPTH_BUFFER_BIT);
+  const aspect=canvas.width/canvas.height;
+  gl.uniformMatrix4fv(uProj,false,perspective(1.05,aspect,.08,120));
+  const cp=Math.cos(player.pitch),sp=Math.sin(player.pitch),sy=Math.sin(player.yaw),cy=Math.cos(player.yaw);
+  const eye=[player.x,player.y,player.z];
+  const target=[player.x+sy*cp,player.y+sp,player.z+cy*cp];
+  gl.uniformMatrix4fv(uView,false,lookAt(eye,target));
+  drawBox(0,-.45,7,30,.45,30,[.16,.42,.17]);
+  drawRoads();
+  buildings.forEach(drawBuilding);
+  npcs.forEach(n=>drawNPC(n,t));
+  for(const it of items){
+    const cols=[[.8,.7,.2],[.9,.15,.12],[.7,.42,.16],[.25,.65,.9]];
+    drawBox(it.x,.45,it.z,.28,.38,.28,cols[it.t]);
+  }
+  for(let i=0;i<stars.length;i++)if(stars[i][0]!==999)drawBox(stars[i][0],.35,stars[i][1],.18,.18,.18,[1,.82,.04],t*.001);
+  drawCloud(-8,12,8,3);drawCloud(3,14,2,3.5);drawCloud(12,11,12,2.5);
+}
+
+function resize(){
+  const d=quality===0?0.85:quality===1?1.0:Math.min(devicePixelRatio||1,1.25);
+  const w=Math.floor(innerWidth*d),h=Math.floor(innerHeight*d);
+  if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;gl.viewport(0,0,w,h);}
+}
+function setJoy(e){
+  const r=document.getElementById("joy").getBoundingClientRect();
+  let dx=e.clientX-(r.left+r.width/2),dy=e.clientY-(r.top+r.height/2);
+  const max=42,len=Math.hypot(dx,dy);
+  if(len>max){dx*=max/len;dy*=max/len}
+  joy.x=dx/max;joy.y=dy/max;
+  document.getElementById("knob").style.transform=`translate(${dx}px,${dy}px)`;
+}
+const joyEl=document.getElementById("joy");
+joyEl.onpointerdown=e=>{joy.active=true;joyEl.setPointerCapture(e.pointerId);setJoy(e)};
+joyEl.onpointermove=e=>{if(joy.active)setJoy(e)};
+joyEl.onpointerup=joyEl.onpointercancel=e=>{joy.active=false;joy.x=joy.y=0;document.getElementById("knob").style.transform="translate(0,0)"};
+
+let last=null;
+const lookEl=document.getElementById("look");
+lookEl.onpointerdown=e=>{last=[e.clientX,e.clientY];lookEl.setPointerCapture(e.pointerId)};
+lookEl.onpointermove=e=>{
+  if(!last)return;
+  player.yaw-=(e.clientX-last[0])*.006;
+  player.pitch=Math.max(-1.15,Math.min(1.15,player.pitch-(e.clientY-last[1])*.006));
+  last=[e.clientX,e.clientY];
+};
+lookEl.onpointerup=lookEl.onpointercancel=()=>last=null;
+
+function update(){
+  /* Touch directions are mapped to the screen as expected:
+   up = forward, down = backward, right = right, left = left. */
+  const f=-joy.y,r=joy.x,speed=3.8;
+  const sy=Math.sin(player.yaw),cy=Math.cos(player.yaw);
+  player.x+=(sy*f+cy*r)*speed/60;
+  player.z+=(cy*f-sy*r)*speed/60;
+  /* simple city bounds */
+  player.x=Math.max(-16,Math.min(16,player.x));
+  player.z=Math.max(-16,Math.min(25,player.z));
+
+  for(let i=items.length-1;i>=0;i--){
+    if(Math.hypot(items[i].x-player.x,items[i].z-player.z)<.75){
+      items.splice(i,1);
+      document.getElementById("help").textContent="¡Objeto 3D recogido!";
+    }
+  }
+  for(let i=0;i<stars.length;i++){
+    if(stars[i][0]!==999 && Math.hypot(stars[i][0]-player.x,stars[i][1]-player.z)<.65){
+      stars[i][0]=999;
+      document.getElementById("score").textContent=Number(document.getElementById("score").textContent)+1;
+    }
+  }
+}
+function loop(t){update();render(t);requestAnimationFrame(loop)}
+gl.enable(gl.DEPTH_TEST);gl.depthFunc(gl.LEQUAL);requestAnimationFrame(loop);
+</script>
+</body></html>
